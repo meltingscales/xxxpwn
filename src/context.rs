@@ -12,6 +12,7 @@ pub const DEFAULT_CHARSET: &str =
     "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r";
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct Config {
     pub case_sensitive: bool,
     pub urlencode: bool,

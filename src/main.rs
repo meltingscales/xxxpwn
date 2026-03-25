@@ -14,7 +14,6 @@ use clap::Parser;
 use crossbeam_channel::unbounded;
 
 use attack::{attack, encode_payload};
-use bst::get_count_bst;
 use context::{AttackCtx, CharJob, CharResult, Config, XmlState, DEFAULT_CHARSET, ROOT_NODE};
 use xml::{get_xml_bst, get_xml_details, xml_optimize_character_set, xml_search};
 
@@ -275,7 +274,7 @@ fn main() {
     // --- Example test mode ---
     if let Some(ref example) = args.example {
         println!("### Testing {} ###", example);
-        let mut no_child_config = (*ctx.config).clone();
+        let no_child_config = ctx.config.clone();
         // We need a fresh ctx with no_child=true for the example test
         // Build a one-shot ctx for this
         let example_config = Config {
