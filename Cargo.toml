@@ -3,6 +3,8 @@ name = "xxxpwn"
 version = "1.0.0"
 edition = "2021"
 description = "XPath eXfiltration eXploitation Tool - Blind optimized XPath 1 injection attacks"
+license = "GPL-3.0"
+repository = "https://github.com/meltingscales/xxxpwn"
 
 [[bin]]
 name = "xxxpwn"
