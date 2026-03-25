@@ -11,4 +11,4 @@ files and target scripts for ease in getting started. This includes a sample
 payload provided for the vulnerable application provided as part of xcat.py:
 https://github.com/orf/xcat
 
-Project Archived January 28, 2026
+Project Rustified 03/24/2026
