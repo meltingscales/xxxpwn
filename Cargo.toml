@@ -1,0 +1,16 @@
+[package]
+name = "xxxpwn"
+version = "1.0.0"
+edition = "2021"
+description = "XPath eXfiltration eXploitation Tool - Blind optimized XPath 1 injection attacks"
+
+[[bin]]
+name = "xxxpwn"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+native-tls = "0.2"
+crossbeam-channel = "0.5"
+percent-encoding = "2"
