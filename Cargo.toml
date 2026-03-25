@@ -1,6 +1,6 @@
 [package]
 name = "xxxpwn"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "XPath eXfiltration eXploitation Tool - Blind optimized XPath 1 injection attacks"
 license = "GPL-3.0"
@@ -16,3 +16,4 @@ regex = "1"
 native-tls = "0.2"
 crossbeam-channel = "0.5"
 percent-encoding = "2"
+url = "2"

