@@ -95,6 +95,22 @@ pub fn attack(inject: &str, ctx: &Arc<AttackCtx>) -> bool {
         }
     }
 
+    // Add or replace Cookie header if cookies were provided
+    if let Some(ref cookies) = config.cookies {
+        let cookie_re = Regex::new(&format!(r"{}(Cookie:\s*.*)", ci)).unwrap();
+        if cookie_re.is_match(&request) {
+            request = cookie_re
+                .replacen(&request, 1, format!("Cookie: {}", cookies).as_str())
+                .to_string();
+        } else {
+            if let Some(pos) = request.find("\r\n\r\n") {
+                request.insert_str(pos, &format!("\r\nCookie: {}", cookies));
+            } else if let Some(pos) = request.find("\n\n") {
+                request.insert_str(pos, &format!("\nCookie: {}", cookies));
+            }
+        }
+    }
+
     // Update Content-Length if present
     let cl_re = Regex::new(&format!(r"{}Content-Length:", ci)).unwrap();
     if cl_re.is_match(&request) {

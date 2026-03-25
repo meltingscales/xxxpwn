@@ -44,6 +44,8 @@ pub struct Config {
     pub xpath2: bool,
     pub search: Option<String>,
     pub search_start: bool,
+    /// Pre-parsed cookie string ready to insert as a Cookie: header value
+    pub cookies: Option<String>,
 }
 
 pub struct CharJob {

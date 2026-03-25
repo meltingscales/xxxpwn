@@ -147,6 +147,10 @@ struct Args {
     /// Match search string at start of node only (starts-with instead of contains)
     #[arg(long = "search_start")]
     search_start: bool,
+
+    /// File containing cookies to inject (one name=value per line, # for comments)
+    #[arg(short = 'C', long = "cookies")]
+    cookie_file: Option<String>,
 }
 
 fn main() {
@@ -209,6 +213,31 @@ fn main() {
     let seen: HashSet<char> = character_set.chars().collect();
     character_set = seen.into_iter().collect();
 
+    // Parse cookie file if provided
+    let cookies = if let Some(ref path) = args.cookie_file {
+        match fs::read_to_string(path) {
+            Ok(content) => {
+                let cookie_str: String = content
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                if cookie_str.is_empty() {
+                    None
+                } else {
+                    Some(cookie_str)
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: Cannot read cookie file '{}': {}", path, e);
+                std::process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
+
     let config = Config {
         case_sensitive: args.case_sensitive,
         urlencode: args.urlencode,
@@ -240,6 +269,7 @@ fn main() {
         xpath2: args.xpath2,
         search: args.search.clone(),
         search_start: args.search_start,
+        cookies,
     };
 
     // Set up worker thread channels
